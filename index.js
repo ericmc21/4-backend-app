@@ -3,10 +3,13 @@ import jose from "node-jose";
 import { randomUUID } from "crypto";
 import axios from "axios";
 import dotenv from "dotenv";
+import { parseArgs } from "util";
 dotenv.config();
 
 const clientId = process.env.CLIENT_ID;
 const tokenEndpoint = process.env.TOKEN_ENDPOINT;
+const fhirBaseUrl = process.env.FHIR_BASE_URL;
+const groupId = "e3iabhmS8rsueyz7vaimuiaSmfGvi.QwjVXJANlPOgR83";
 
 const createJWT = async (payload) => {
   const ks = fs.readFileSync("keys.json");
@@ -45,5 +48,50 @@ const makeTokenRequest = async () => {
   return tokenResponse.data;
 };
 
+const kickOffBulkDataExport = async (accessToken) => {
+  const bulkKickofResponse = await axios.get(
+    `${fhirBaseUrl}/Group/${groupId}/$export`,
+    {
+      params: {
+        type: "patient,observation",
+        typeFilter: "Observation?category=laboratory",
+      },
+      headers: {
+        Accept: "application/fhir+json",
+        Authorization: `Bearer ${accessToken}`,
+        Prefer: "respond-async",
+      },
+    }
+  );
+
+  return bulkKickofResponse.headers.get("content-location");
+};
+
+const pollAndWaitforExport = async (url, accessToken) => {
+  const response = await axios.get(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (response.status === 202) {
+    // still processing
+    const progress = response.headers["x-progress"];
+    console.log(`waiting for export to complete: ${progress}`);
+    await new Promise((resolve) => setTimeout(resolve, 10000));
+    return await pollAndWaitforExport(url, accessToken);
+  } else if (response.status === 200) {
+    return response.data;
+  } else {
+    throw new Error(`Unexpected status: ${response.status}`);
+  }
+};
+
 const tokenResponse = await makeTokenRequest();
 const accessToken = tokenResponse.access_token;
+const contentLocation = await kickOffBulkDataExport(accessToken);
+const bulkDataResponse = await pollAndWaitforExport(
+  contentLocation,
+  accessToken
+);
+console.log(bulkDataResponse);
