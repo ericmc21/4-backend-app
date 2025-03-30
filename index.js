@@ -2,6 +2,8 @@ import fs from "fs";
 import jose from "node-jose";
 import { randomUUID } from "crypto";
 import axios from "axios";
+import dotenv from "dotenv";
+dotenv.config();
 
 const clientId = process.env.CLIENT_ID;
 const tokenEndpoint = process.env.TOKEN_ENDPOINT;
@@ -34,6 +36,7 @@ const makeTokenRequest = async () => {
     "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
   );
   formParams.set("client_assertion", jwt);
+  console.log(tokenEndpoint);
   const tokenResponse = await axios.post(tokenEndpoint, formParams, {
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -42,4 +45,5 @@ const makeTokenRequest = async () => {
   return tokenResponse.data;
 };
 
-console.log(await makeTokenRequest());
+const tokenResponse = await makeTokenRequest();
+const accessToken = tokenResponse.access_token;
