@@ -32,6 +32,7 @@ const makeTokenRequest = async () => {
     exp: generateExpiry(4),
   });
 
+  console.log(jwt);
   const formParams = new URLSearchParams();
   formParams.set("grant_type", "client_credentials");
   formParams.set(
@@ -53,8 +54,8 @@ const kickOffBulkDataExport = async (accessToken) => {
     `${fhirBaseUrl}/Group/${groupId}/$export`,
     {
       params: {
-        type: "patient,observation",
-        typeFilter: "Observation?category=laboratory",
+        _type: "patient,observation",
+        _typeFilter: "Observation?category=laboratory",
       },
       headers: {
         Accept: "application/fhir+json",
@@ -78,13 +79,26 @@ const pollAndWaitforExport = async (url, accessToken) => {
     // still processing
     const progress = response.headers["x-progress"];
     console.log(`waiting for export to complete: ${progress}`);
-    await new Promise((resolve) => setTimeout(resolve, 10000));
+    await new Promise((resolve) => setTimeout(resolve, 5000));
     return await pollAndWaitforExport(url, accessToken);
   } else if (response.status === 200) {
     return response.data;
   } else {
     throw new Error(`Unexpected status: ${response.status}`);
   }
+};
+
+const processBulkResponse = async (bundleResponse, accessToken) => {
+  const promises = bundleResponse.output?.map(async (output) => {
+    const url = output.url;
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+    return { url, data: response.data, type: output.type };
+  });
+  return Promise.all(promises);
 };
 
 const tokenResponse = await makeTokenRequest();
@@ -94,4 +108,5 @@ const bulkDataResponse = await pollAndWaitforExport(
   contentLocation,
   accessToken
 );
-console.log(bulkDataResponse);
+const bulkData = await processBulkResponse(bulkDataResponse, accessToken);
+console.log(bulkData);
