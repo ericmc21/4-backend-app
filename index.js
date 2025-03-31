@@ -3,7 +3,7 @@ import jose from "node-jose";
 import { randomUUID } from "crypto";
 import axios from "axios";
 import dotenv from "dotenv";
-import { parseArgs } from "util";
+import readline from "readline";
 dotenv.config();
 
 const clientId = process.env.CLIENT_ID;
@@ -89,16 +89,43 @@ const pollAndWaitforExport = async (url, accessToken) => {
 };
 
 const processBulkResponse = async (bundleResponse, accessToken) => {
+  const outputStream = fs.createWriteStream("response.txt");
   const promises = bundleResponse.output?.map(async (output) => {
     const url = output.url;
     const response = await axios.get(url, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
+      responseType: "stream",
     });
-    return { url, data: response.data, type: output.type };
+
+    const rl = readline.createInterface({
+      input: response.data,
+      crlfDelay: Infinity,
+    });
+
+    const resources = [];
+    for await (const line of rl) {
+      if (line.trim() !== "") {
+        const resource = JSON.parse(line);
+        resources.push(resource);
+        outputStream.write(JSON.stringify(resource) + "\n");
+      }
+    }
+
+    return {
+      url,
+      type: output.type,
+      resources,
+    };
   });
-  return Promise.all(promises);
+  // Wait for all NDJSON files to be fully processed before closing the file
+  const results = await Promise.all(promises);
+  outputStream.end();
+
+  console.log("NDJSON resources written to response.txt");
+
+  return results;
 };
 
 const tokenResponse = await makeTokenRequest();
