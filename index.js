@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import axios from "axios";
 import dotenv from "dotenv";
 import readline from "readline";
+import nodemailer from "nodemailer";
 dotenv.config();
 
 const clientId = process.env.CLIENT_ID;
@@ -184,6 +185,48 @@ const getAllLabsByPatient = (observations) => {
   return labsByPatient;
 };
 
+const alertPatients = async (labsByPatient) => {
+  for (const patientId in labsByPatient) {
+    const labs = labsByPatient[patientId];
+    const summary = labs
+      .map(
+        (lab) =>
+          `${lab.test}: ${lab.value} ${lab.unit || ""} (Ref: ${lab.reference})`
+      )
+      .join("\n");
+
+    await sendEmail(
+      process.env.ALERT_EMAIL_TO,
+      `All Labs for Patient ${patientId}`,
+      summary
+    );
+  }
+};
+
+const sendEmail = async (to, subject, text) => {
+  const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+
+  const mailOptions = {
+    from: `"FHIR Alerts" <${process.env.EMAIL_USER}>`,
+    to,
+    subject,
+    text,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Email sent to ${to}`);
+  } catch (error) {
+    console.error("Email failed:", error.message);
+  }
+};
+
 const tokenResponse = await makeTokenRequest();
 const accessToken = tokenResponse.access_token;
 const contentLocation = await kickOffBulkDataExport(accessToken);
@@ -196,4 +239,4 @@ const labResources =
   bulkData.find((r) => r.type === "Observation")?.resources || [];
 //const abnormal = findAbnormalLabs(labResources);
 const all = getAllLabsByPatient(labResources);
-console.log(all);
+await alertPatients(all);
