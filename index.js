@@ -89,7 +89,6 @@ const pollAndWaitforExport = async (url, accessToken) => {
 };
 
 const processBulkResponse = async (bundleResponse, accessToken) => {
-  const outputStream = fs.createWriteStream("response.txt");
   const promises = bundleResponse.output?.map(async (output) => {
     const url = output.url;
     const response = await axios.get(url, {
@@ -109,7 +108,6 @@ const processBulkResponse = async (bundleResponse, accessToken) => {
       if (line.trim() !== "") {
         const resource = JSON.parse(line);
         resources.push(resource);
-        outputStream.write(JSON.stringify(resource) + "\n");
       }
     }
 
@@ -120,12 +118,70 @@ const processBulkResponse = async (bundleResponse, accessToken) => {
     };
   });
   // Wait for all NDJSON files to be fully processed before closing the file
-  const results = await Promise.all(promises);
-  outputStream.end();
+  return Promise.all(promises);
+};
 
-  console.log("NDJSON resources written to response.txt");
+const findAbnormalLabs = (observations) => {
+  const abnormalByPatient = {};
 
-  return results;
+  observations.forEach((obs) => {
+    const { subject, code, valueQuantity, referenceRange } = obs;
+
+    if (!subject?.reference || !valueQuantity || !referenceRange?.length)
+      return;
+
+    const patientId = subject.reference.replace("Patient/", "");
+    const { value, unit } = valueQuantity;
+    const range = referenceRange[0];
+    const low = range.low?.value;
+    const high = range.high?.value;
+
+    if (
+      (low !== undefined && value < low) ||
+      (high !== undefined && value > high)
+    ) {
+      if (!abnormalByPatient[patientId]) abnormalByPatient[patientId] = [];
+
+      abnormalByPatient[patientId].push({
+        test: code?.text || code?.coding?.[0]?.display || "Unknown Test",
+        value,
+        unit,
+        reference: `${low ?? "-"} - ${high ?? "-"}`,
+      });
+    }
+  });
+  console.log(abnormalByPatient);
+  return abnormalByPatient;
+};
+
+const getAllLabsByPatient = (observations) => {
+  const labsByPatient = {};
+
+  observations.forEach((obs) => {
+    const { subject, code, valueQuantity, referenceRange } = obs;
+
+    if (!subject?.reference || !valueQuantity) return;
+
+    const patientId = subject.reference.replace("Patient/", "");
+    const { value, unit } = valueQuantity;
+    const range = referenceRange?.[0];
+    const low = range?.low?.value;
+    const high = range?.high?.value;
+
+    if (!labsByPatient[patientId]) labsByPatient[patientId] = [];
+
+    labsByPatient[patientId].push({
+      test: code?.text || code?.coding?.[0]?.display || "Unknown Test",
+      value,
+      unit,
+      reference:
+        low !== undefined || high !== undefined
+          ? `${low ?? "-"} - ${high ?? "-"}`
+          : "N/A",
+    });
+  });
+
+  return labsByPatient;
 };
 
 const tokenResponse = await makeTokenRequest();
@@ -136,4 +192,8 @@ const bulkDataResponse = await pollAndWaitforExport(
   accessToken
 );
 const bulkData = await processBulkResponse(bulkDataResponse, accessToken);
-console.log(bulkData);
+const labResources =
+  bulkData.find((r) => r.type === "Observation")?.resources || [];
+//const abnormal = findAbnormalLabs(labResources);
+const all = getAllLabsByPatient(labResources);
+console.log(all);
