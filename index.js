@@ -171,6 +171,13 @@ const getAllLabsByPatient = (observations) => {
 
     if (!labsByPatient[patientId]) labsByPatient[patientId] = [];
 
+    let isAbnormal = false;
+    if (low !== undefined && value < low) {
+      isAbnormal = true;
+    } else if (high !== undefined && value > high) {
+      isAbnormal = true;
+    }
+
     labsByPatient[patientId].push({
       test: code?.text || code?.coding?.[0]?.display || "Unknown Test",
       value,
@@ -178,26 +185,46 @@ const getAllLabsByPatient = (observations) => {
       reference:
         low !== undefined || high !== undefined
           ? `${low ?? "-"} - ${high ?? "-"}`
-          : "N/A",
+          : "Reference range not available",
+      abnormal: isAbnormal,
     });
   });
 
   return labsByPatient;
 };
 
-const alertPatients = async (labsByPatient) => {
+const getPatientNames = (patientResources) => {
+  const namesByPatientId = {};
+  patientResources.forEach((patient) => {
+    const id = patient.id;
+    const nameEntry = patient.name?.[0];
+
+    if (!id || !nameEntry) return;
+
+    const fullName = [...(nameEntry.given || []), nameEntry.family].join(" ");
+
+    namesByPatientId[id] = fullName;
+  });
+  return namesByPatientId;
+};
+
+const alertPatients = async (labsByPatient, patientNames) => {
   for (const patientId in labsByPatient) {
     const labs = labsByPatient[patientId];
+    const patientName = patientNames[patientId] || "Unknown Patient";
+
     const summary = labs
       .map(
         (lab) =>
-          `${lab.test}: ${lab.value} ${lab.unit || ""} (Ref: ${lab.reference})`
+          `${lab.test}: ${lab.value} ${lab.unit || ""} (Ref: ${
+            lab.reference
+          }) ${lab.abnormal ? "! ABNORMAL" : ""}`
       )
       .join("\n");
 
     await sendEmail(
       process.env.ALERT_EMAIL_TO,
-      `All Labs for Patient ${patientId}`,
+      `Lab Results for ${patientName} ${patientId}`,
       summary
     );
   }
@@ -237,6 +264,8 @@ const bulkDataResponse = await pollAndWaitforExport(
 const bulkData = await processBulkResponse(bulkDataResponse, accessToken);
 const labResources =
   bulkData.find((r) => r.type === "Observation")?.resources || [];
-//const abnormal = findAbnormalLabs(labResources);
-const all = getAllLabsByPatient(labResources);
-await alertPatients(all);
+const patientResources =
+  bulkData.find((r) => r.type === "Patient")?.resources || [];
+const patientLabs = getAllLabsByPatient(labResources);
+const patientNames = getPatientNames(patientResources);
+await alertPatients(patientLabs, patientNames);
