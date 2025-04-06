@@ -5,6 +5,8 @@ import axios from "axios";
 import dotenv from "dotenv";
 import readline from "readline";
 import nodemailer from "nodemailer";
+import schedule from "node-schedule";
+
 dotenv.config();
 
 const clientId = process.env.CLIENT_ID;
@@ -224,8 +226,8 @@ const alertPatients = async (labsByPatient, patientNames) => {
 
     await sendEmail(
       process.env.ALERT_EMAIL_TO,
-      `Lab Results for ${patientName} ${patientId}`,
-      summary
+      `Lab Reports on ${new Date().toDateString()}`,
+      `Lab Reports for ${patientName} ${patientId}` + "\n" + summary
     );
   }
 };
@@ -254,18 +256,28 @@ const sendEmail = async (to, subject, text) => {
   }
 };
 
-const tokenResponse = await makeTokenRequest();
-const accessToken = tokenResponse.access_token;
-const contentLocation = await kickOffBulkDataExport(accessToken);
-const bulkDataResponse = await pollAndWaitforExport(
-  contentLocation,
-  accessToken
-);
-const bulkData = await processBulkResponse(bulkDataResponse, accessToken);
-const labResources =
-  bulkData.find((r) => r.type === "Observation")?.resources || [];
-const patientResources =
-  bulkData.find((r) => r.type === "Patient")?.resources || [];
-const patientLabs = getAllLabsByPatient(labResources);
-const patientNames = getPatientNames(patientResources);
-await alertPatients(patientLabs, patientNames);
+const runJob = async () => {
+  console.log("Running FHIR bulk data lab check...");
+  const tokenResponse = await makeTokenRequest();
+  const accessToken = tokenResponse.access_token;
+  const contentLocation = await kickOffBulkDataExport(accessToken);
+  const bulkDataResponse = await pollAndWaitforExport(
+    contentLocation,
+    accessToken
+  );
+  const bulkData = await processBulkResponse(bulkDataResponse, accessToken);
+  const labResources =
+    bulkData.find((r) => r.type === "Observation")?.resources || [];
+  const patientResources =
+    bulkData.find((r) => r.type === "Patient")?.resources || [];
+  const patientLabs = getAllLabsByPatient(labResources);
+  const patientNames = getPatientNames(patientResources);
+  await alertPatients(patientLabs, patientNames);
+  console.log("FHIR lab monitoring job complete.");
+};
+
+//schedule.scheduleJob("0 0 * * *", runJob); // every 24 hours at midnight
+schedule.scheduleJob("*/5 * * * *", runJob); // test every 5 minutes
+
+// on start up
+await runJob();
